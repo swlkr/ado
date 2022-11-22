@@ -1,10 +1,36 @@
+use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Result, Write};
+use std::io::{Read, Write};
+use std::str::FromStr;
 
 const FILENAME: &str = "./TODO.txt";
 
-#[derive(Default)]
+#[derive(Debug)]
+enum Action {
+    Add,
+    Done,
+    List,
+    Delete,
+    Undo,
+}
+
+impl FromStr for Action {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "list" => Ok(Action::List),
+            "done" => Ok(Action::Done),
+            "add" => Ok(Action::Add),
+            "del" => Ok(Action::Delete),
+            "undo" => Ok(Action::Undo),
+            _ => Err(String::from("unsupported action")),
+        }
+    }
+}
+
+#[derive(Default, Debug)]
 struct Todo {
     completed: bool,
     content: String,
@@ -18,7 +44,7 @@ impl Todo {
         }
     }
 
-    fn file() -> Result<File> {
+    fn file() -> std::io::Result<File> {
         OpenOptions::new()
             .read(true)
             .write(true)
@@ -26,7 +52,7 @@ impl Todo {
             .open(FILENAME)
     }
 
-    fn read() -> Result<String> {
+    fn read() -> std::io::Result<String> {
         let mut contents = String::new();
         Self::file()?.read_to_string(&mut contents)?;
         return Ok(contents);
@@ -61,7 +87,7 @@ impl Todo {
         }
     }
 
-    fn add(content: String, completed: bool) -> Result<Vec<Todo>> {
+    fn add(content: String, completed: bool) -> std::io::Result<Vec<Todo>> {
         let mut todos = Todo::all();
         let todo = Todo::new(&content, completed);
         todos.push(todo);
@@ -69,21 +95,30 @@ impl Todo {
         return Ok(todos);
     }
 
-    fn complete_by(index: usize) -> Result<Vec<Todo>> {
+    fn update_by(index: usize, completed: bool) -> std::io::Result<Vec<Todo>> {
         let mut todos = Todo::all();
         let mut todo = &mut todos[index];
-        todo.completed = true;
+        todo.completed = completed;
         Todo::write(&mut todos)?;
         return Ok(todos);
     }
 
-    fn write(todos: &Vec<Todo>) -> Result<()> {
+    fn delete_by(index: usize) -> std::io::Result<Vec<Todo>> {
+        let mut todos = Todo::all();
+        todos.remove(index);
+        Todo::write(&todos)?;
+        return Ok(todos);
+    }
+
+    fn write(todos: &Vec<Todo>) -> std::io::Result<()> {
         let contents = todos
             .iter()
             .map(|todo| todo.to_s())
             .collect::<Vec<String>>()
             .join("\n");
-        Self::file()?.write_all(contents.as_bytes())?;
+        let mut f = Self::file()?;
+        f.set_len(0)?;
+        f.write_all(contents.as_bytes())?;
         Ok(())
     }
 
@@ -102,24 +137,71 @@ impl Display for Todo {
     }
 }
 
-fn list() -> Vec<Todo> {
-    Todo::all()
+fn list() {
+    let todos = Todo::all();
+    let mut x = 0;
+    for todo in todos {
+        println!("{} {}", x, todo);
+        x += 1;
+    }
 }
 
-fn add(args: Vec<&str>) -> Result<Vec<Todo>> {
+fn add(args: Vec<String>) -> std::io::Result<Vec<Todo>> {
     Todo::add(args.join(" "), false)
 }
 
-fn done(index: usize) -> Result<Vec<Todo>> {
-    Todo::complete_by(index)
+fn done(index: usize) -> std::io::Result<Vec<Todo>> {
+    Todo::update_by(index, true)
 }
 
-fn main() -> Result<()> {
-    if let Ok(todos) = done(0) {
-        for todo in todos {
-            println!("{}", todo);
+fn delete(index: usize) -> std::io::Result<Vec<Todo>> {
+    Todo::delete_by(index)
+}
+
+fn undo(index: usize) -> std::io::Result<Vec<Todo>> {
+    Todo::update_by(index, false)
+}
+
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() > 0 {
+        if let Ok(action) = args[0].parse() {
+            match action {
+                Action::List => {
+                    list();
+                }
+                Action::Add => {
+                    add(args.into_iter().skip(1).collect::<Vec<String>>())?;
+                    list();
+                }
+                Action::Done => {
+                    if args.len() > 1 {
+                        let idx: usize = args[1].parse().unwrap();
+                        done(idx)?;
+                        list();
+                    }
+                }
+                Action::Delete => {
+                    if args.len() > 1 {
+                        let idx: usize = args[1].parse().unwrap();
+                        delete(idx)?;
+                        list();
+                    }
+                }
+                Action::Undo => {
+                    if args.len() > 1 {
+                        let idx: usize = args[1].parse().unwrap();
+                        undo(idx)?;
+                        list();
+                    }
+                }
+            }
+        } else {
+            println!("Try add, list, done, del or undo")
         }
-    };
+    } else {
+        list();
+    }
     Ok(())
 }
 
